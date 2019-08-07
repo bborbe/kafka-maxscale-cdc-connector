@@ -14,11 +14,10 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-var _ = Describe("MaxscaleReader", func() {
+var _ = Describe("Streamer", func() {
 	var reader *mocks.Reader
 	var sender *mocks.Sender
-	var streamer *cdc.Streamer
-
+	var streamer cdc.Streamer
 	BeforeEach(func() {
 		reader = &mocks.Reader{}
 		reader.ReadStub = func(i context.Context, gtid *cdc.GTID, bytes chan<- []byte) error {
@@ -31,37 +30,52 @@ var _ = Describe("MaxscaleReader", func() {
 			}
 			return nil
 		}
-		streamer = &cdc.Streamer{
-			Reader: reader,
-			Sender: sender,
-		}
+	})
+	Context("with gtid", func() {
+		BeforeEach(func() {
+			gtiid, err := cdc.ParseGTID("1-3-37")
+			Expect(err).To(BeNil())
+			streamer = cdc.NewStreamer(
+				gtiid,
+				reader,
+				sender,
+			)
+		})
+		It("returns nil", func() {
+			err := streamer.Run(context.Background())
+			Expect(err).To(BeNil())
+		})
+		It("calls the reader with the given gtid", func() {
+			err := streamer.Run(context.Background())
+			Expect(err).To(BeNil())
+			Expect(reader.ReadCallCount()).To(Equal(1))
+			ctx, gtid, ch := reader.ReadArgsForCall(0)
+			Expect(ctx).NotTo(BeNil())
+			Expect(gtid).To(Equal(gtid))
+			Expect(ch).NotTo(BeNil())
+		})
+	})
+	Context("without gtid", func() {
+		BeforeEach(func() {
+			streamer = cdc.NewStreamer(
+				nil,
+				reader,
+				sender,
+			)
+		})
+		It("returns nil", func() {
+			err := streamer.Run(context.Background())
+			Expect(err).To(BeNil())
+		})
+		It("calls the sender", func() {
+			err := streamer.Run(context.Background())
+			Expect(err).To(BeNil())
+			time.Sleep(100 * time.Millisecond)
+			Expect(sender.SendCallCount()).To(Equal(1))
+			ctx, ch := sender.SendArgsForCall(0)
+			Expect(ctx).NotTo(BeNil())
+			Expect(ch).NotTo(BeNil())
+		})
 	})
 
-	It("returns nil", func() {
-		err := streamer.Run(context.Background())
-		Expect(err).To(BeNil())
-	})
-
-	It("calls the reader with the given gtid", func() {
-		gtiid, err := cdc.ParseGTID("1-3-37")
-		Expect(err).To(BeNil())
-		streamer.GTID = gtiid
-		err = streamer.Run(context.Background())
-		Expect(err).To(BeNil())
-		Expect(reader.ReadCallCount()).To(Equal(1))
-		ctx, gtid, ch := reader.ReadArgsForCall(0)
-		Expect(ctx).NotTo(BeNil())
-		Expect(gtid).To(Equal(gtid))
-		Expect(ch).NotTo(BeNil())
-	})
-
-	It("calls the sender", func() {
-		err := streamer.Run(context.Background())
-		Expect(err).To(BeNil())
-		time.Sleep(100 * time.Millisecond)
-		Expect(sender.SendCallCount()).To(Equal(1))
-		ctx, ch := sender.SendArgsForCall(0)
-		Expect(ctx).NotTo(BeNil())
-		Expect(ch).NotTo(BeNil())
-	})
 })

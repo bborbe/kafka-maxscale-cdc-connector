@@ -2,10 +2,10 @@
 package mocks
 
 import (
-	context "context"
-	sync "sync"
+	"context"
+	"sync"
 
-	cdc "github.com/bborbe/kafka-maxscale-cdc-connector/cdc"
+	"github.com/bborbe/kafka-maxscale-cdc-connector/cdc"
 )
 
 type Dialer struct {

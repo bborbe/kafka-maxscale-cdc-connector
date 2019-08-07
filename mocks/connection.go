@@ -2,9 +2,9 @@
 package mocks
 
 import (
-	sync "sync"
+	"sync"
 
-	cdc "github.com/bborbe/kafka-maxscale-cdc-connector/cdc"
+	"github.com/bborbe/kafka-maxscale-cdc-connector/cdc"
 )
 
 type Connection struct {

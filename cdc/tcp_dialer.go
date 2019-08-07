@@ -24,19 +24,31 @@ type Connection interface {
 }
 
 // TcpDialer opens a TCP connection to the given address
-type TcpDialer struct {
-	Address string
+type TcpDialer interface {
+	Dial(ctx context.Context) (Connection, error)
+}
+
+func NewTcpDialer(
+	address string,
+) TcpDialer {
+	return &tcpDialer{
+		address: address,
+	}
+}
+
+type tcpDialer struct {
+	address string
 }
 
 // Dial to the target with context and timeout
-func (t *TcpDialer) Dial(ctx context.Context) (Connection, error) {
-	glog.V(2).Infof("connect to %s", t.Address)
+func (t *tcpDialer) Dial(ctx context.Context) (Connection, error) {
+	glog.V(2).Infof("connect to %s", t.address)
 	dialer := net.Dialer{
 		Timeout: connectTimeout,
 	}
-	conn, err := dialer.DialContext(ctx, "tcp", t.Address)
+	conn, err := dialer.DialContext(ctx, "tcp", t.address)
 	if err != nil {
-		return nil, errors.Wrapf(err, "connect to %s failed", t.Address)
+		return nil, errors.Wrapf(err, "connect to %s failed", t.address)
 	}
 	return conn, nil
 }

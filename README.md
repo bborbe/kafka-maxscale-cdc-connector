@@ -12,9 +12,11 @@ go run main.go \
 -cdc-password=cdc \
 -cdc-database=test \
 -cdc-table=names \
+-cdc-uuid=e3835094-4824-4f9d-ba97-5e2ec217733b \
 -kafka-brokers=kafka:9092 \
 -kafka-topic=cdc-test-names \
 -datadir=/tmp \
+-initial-delay=1s \
 -v=2
 ```
 
@@ -33,7 +35,7 @@ INSERT INTO test.names (name) VALUES ('World');
 ```bash
 go get github.com/Shopify/sarama/tools/kafka-console-consumer
 kafka-console-consumer -topic=cdc-test-names -brokers=kafka:9092
-```
+```       
 
 ## Docker Compose
 
@@ -44,5 +46,8 @@ docker-compose up \
 --force-recreate \
 --build \
 --detach
-```
+```         
 
+```bash
+docker exec -ti mariadb mysql --password=123
+```

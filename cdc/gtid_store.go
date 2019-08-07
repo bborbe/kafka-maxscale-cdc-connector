@@ -12,12 +12,25 @@ import (
 )
 
 // GTIDStore save GTID to disk
-type GTIDStore struct {
-	DataDir string
+type GTIDStore interface {
+	Read() (*GTID, error)
+	Write(gtid *GTID) error
+}
+
+func NewGTIDStore(
+	dataDir string,
+) GTIDStore {
+	return &gtidStore{
+		dataDir: dataDir,
+	}
+}
+
+type gtidStore struct {
+	dataDir string
 }
 
 // Read the last GTID from disk
-func (g *GTIDStore) Read() (*GTID, error) {
+func (g *gtidStore) Read() (*GTID, error) {
 	content, err := ioutil.ReadFile(g.path())
 	if err != nil {
 		return nil, errors.Wrapf(err, "read file %s failed", g.path())
@@ -26,10 +39,10 @@ func (g *GTIDStore) Read() (*GTID, error) {
 }
 
 // Write the given GTID to disk
-func (g *GTIDStore) Write(gtid *GTID) error {
+func (g *gtidStore) Write(gtid *GTID) error {
 	return ioutil.WriteFile(g.path(), []byte(gtid.String()), 0600)
 }
 
-func (g *GTIDStore) path() string {
-	return path.Join(g.DataDir, "lastgtid")
+func (g *gtidStore) path() string {
+	return path.Join(g.dataDir, "lastgtid")
 }

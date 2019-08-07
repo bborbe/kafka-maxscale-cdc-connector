@@ -37,69 +37,78 @@ type MaxscaleReader struct {
 
 // Read all cdc and send them to the given channel
 // https://mariadb.com/resources/blog/how-to-stream-change-data-through-mariadb-maxscale-using-cdc-api/
-func (r *MaxscaleReader) Read(ctx context.Context, gtid *GTID, ch chan<- []byte) error {
-
-	conn, err := r.Dialer.Dial(ctx)
+func (m *MaxscaleReader) Read(ctx context.Context, gtid *GTID, ch chan<- []byte) error {
+	if m.Format != "JSON" && m.Format != "AVRO" {
+		return errors.New("Format invalid")
+	}
+	conn, err := m.Dialer.Dial(ctx)
 	if err != nil {
 		return errors.Wrapf(err, "connect to cdc failed")
 	}
 	defer conn.Close()
 
-	err = r.writeAuth(conn)
+	err = m.writeAuth(conn)
 	if err != nil {
 		return err
 	}
-	err = r.expectResponse(conn, []byte("OK"))
+	err = m.expectResponse(conn, []byte("OK"))
 	if err != nil {
 		return err
 	}
 	glog.V(1).Infof("login successful")
 
-	_, err = fmt.Fprintf(conn, "REGISTER UUID=%s, TYPE=%s", r.UUID, r.Format)
+	_, err = fmt.Fprintf(conn, "REGISTER UUID=%s, TYPE=%s", m.UUID, m.Format)
 	if err != nil {
-		return errors.Wrapf(err, "register with uuid: %s and type: %s failed", r.UUID, r.Format)
+		return errors.Wrapf(err, "register with uuid: %s and type: %s failed", m.UUID, m.Format)
 	}
-	err = r.expectResponse(conn, []byte("OK"))
+	err = m.expectResponse(conn, []byte("OK"))
 	if err != nil {
 		return err
 	}
-	glog.V(1).Infof("register with uuid: %s and type: %s successful", r.UUID, r.Format)
+	glog.V(1).Infof("register with uuid: %s and type: %s successful", m.UUID, m.Format)
 
-	_, err = conn.Write(r.buildRequestCommand(gtid))
+	_, err = conn.Write(m.buildRequestCommand(gtid))
 	if err != nil {
 		return errors.Wrap(err, "write request to connection failed")
 	}
 
+	glog.V(1).Infof("start streaming of %s %s %s %s", m.Database, m.Table, m.Version, gtid)
+	reader := bufio.NewReader(conn)
 	errs := make(chan error)
-	glog.V(1).Infof("start streaming of %s %s %s %s", r.Database, r.Table, r.Version, gtid)
 	go func() {
-		reader := bufio.NewReader(conn)
+		defer close(errs)
 		for {
-			line, err := reader.ReadBytes('\n')
-			if err == io.EOF {
-				glog.V(1).Infof("connection closed")
+			select {
+			case <-ctx.Done():
 				errs <- nil
 				return
-			}
-			if err != nil {
-				errs <- errors.Wrap(err, "read line failed")
-				return
-			}
-			if startsWith(line, []byte("ERR")) {
-				errs <- errors.Errorf("got error: %s", string(line))
-				return
-			}
-			if glog.V(4) {
-				glog.Infof("read %s", string(line))
-			}
-			select {
-			case ch <- line:
-			case <-ctx.Done():
-				return
+			default:
+				line, err := reader.ReadBytes('\n')
+				if err == io.EOF {
+					glog.V(1).Infof("connection closed")
+					errs <- nil
+					return
+				}
+				if err != nil {
+					errs <- errors.Wrap(err, "read line failed")
+					return
+				}
+				if startsWith(line, []byte("ERR")) {
+					errs <- errors.Errorf("got error: %s", string(line))
+					return
+				}
+				if glog.V(4) {
+					glog.Infof("read %s", string(line))
+				}
+				select {
+				case ch <- line:
+				case <-ctx.Done():
+					errs <- nil
+					return
+				}
 			}
 		}
 	}()
-
 	select {
 	case <-ctx.Done():
 		return nil
@@ -109,11 +118,11 @@ func (r *MaxscaleReader) Read(ctx context.Context, gtid *GTID, ch chan<- []byte)
 }
 
 // REQUEST-DATA DATABASE.TABLE[.VERSION] [GTID]
-func (r *MaxscaleReader) buildRequestCommand(gtid *GTID) []byte {
+func (m *MaxscaleReader) buildRequestCommand(gtid *GTID) []byte {
 	buf := bytes.NewBufferString("REQUEST-DATA ")
-	_, _ = fmt.Fprintf(buf, "%s.%s", r.Database, r.Table)
-	if len(r.Version) > 0 {
-		_, _ = fmt.Fprintf(buf, ".%s", r.Version)
+	_, _ = fmt.Fprintf(buf, "%s.%s", m.Database, m.Table)
+	if len(m.Version) > 0 {
+		_, _ = fmt.Fprintf(buf, ".%s", m.Version)
 	}
 	if gtid != nil {
 		_, _ = fmt.Fprintf(buf, " %s", gtid.String())
@@ -121,18 +130,21 @@ func (r *MaxscaleReader) buildRequestCommand(gtid *GTID) []byte {
 	return buf.Bytes()
 }
 
-func (r *MaxscaleReader) expectResponse(conn io.Reader, expectedResponse []byte) error {
-	buf, err := r.read(conn)
+func (m *MaxscaleReader) expectResponse(conn io.Reader, expectedResponse []byte) error {
+	buf, err := m.read(conn)
 	if err != nil {
 		return err
 	}
 	if !startsWith(buf, expectedResponse) {
+		if glog.V(4) {
+			glog.Infof("login failed buff: %s", string(buf))
+		}
 		return errors.New("login failed")
 	}
 	return nil
 }
 
-func (r *MaxscaleReader) read(conn io.Reader) ([]byte, error) {
+func (m *MaxscaleReader) read(conn io.Reader) ([]byte, error) {
 	buf := make([]byte, 1024)
 	n, err := conn.Read(buf)
 	if err != nil {
@@ -141,12 +153,14 @@ func (r *MaxscaleReader) read(conn io.Reader) ([]byte, error) {
 	return buf[0:n], nil
 }
 
-func (r *MaxscaleReader) writeAuth(conn io.Writer) error {
+func (m *MaxscaleReader) writeAuth(conn io.Writer) error {
 	h := sha1.New()
-	io.WriteString(h, r.Password)
-
+	_, err := io.WriteString(h, m.Password)
+	if err != nil {
+		return err
+	}
 	encoder := hex.NewEncoder(conn)
-	_, err := encoder.Write([]byte(fmt.Sprintf("%s:", r.User)))
+	_, err = encoder.Write([]byte(fmt.Sprintf("%s:", m.User)))
 	if err != nil {
 		return errors.Wrap(err, "hex encode failed")
 	}

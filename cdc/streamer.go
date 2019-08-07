@@ -6,6 +6,7 @@ package cdc
 
 import (
 	"context"
+	"github.com/golang/glog"
 	"runtime"
 	"sync"
 
@@ -26,14 +27,32 @@ type Sender interface {
 }
 
 // Streamer coordinates read and send of CDC records
-type Streamer struct {
-	GTID   *GTID
-	Reader Reader
-	Sender Sender
+type Streamer interface {
+	Run(ctx context.Context) error
+}
+
+func NewStreamer(
+	gtid *GTID,
+	reader Reader,
+	sender Sender,
+) Streamer {
+	return &streamer{
+		gtid:   gtid,
+		reader: reader,
+		sender: sender,
+	}
+}
+
+type streamer struct {
+	gtid   *GTID
+	reader Reader
+	sender Sender
 }
 
 // Run read and send of CDC records
-func (s *Streamer) Run(ctx context.Context) error {
+func (s *streamer) Run(ctx context.Context) error {
+	glog.V(1).Infof("stream started")
+	defer glog.V(1).Infof("stream finished")
 	ch := make(chan []byte, runtime.NumCPU())
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -45,11 +64,11 @@ func (s *Streamer) Run(ctx context.Context) error {
 		ctx,
 		func(ctx context.Context) error {
 			defer wg.Done()
-			return s.Reader.Read(ctx, s.GTID, ch)
+			return s.reader.Read(ctx, s.gtid, ch)
 		},
 		func(ctx context.Context) error {
 			defer wg.Done()
-			return s.Sender.Send(ctx, ch)
+			return s.sender.Send(ctx, ch)
 		},
 	)
 }
